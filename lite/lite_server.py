@@ -131,6 +131,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         return
             self.send_error(404, "File not found")
 
+        # Generate presigned URL for log upload to DigitalOcean Spaces
+        elif request.path == WEBROOT + "/www/upload-log-url":
+            print("Received request for upload URL")
+            do_key = os.environ.get("DO_SPACES_KEY")
+            do_secret = os.environ.get("DO_SPACES_SECRET")
+            do_region = os.environ.get("DO_SPACES_REGION")
+            do_bucket = os.environ.get("DO_SPACES_BUCKET")
+
+            if not all([do_key, do_secret, do_region, do_bucket]):
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Cloud upload not configured. Set DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_REGION, and DO_SPACES_BUCKET environment variables.")
+                return
+
+            filename = query.get("filename", ["log.wpilog"])[0]
+            # Sanitize: keep only the basename to prevent path traversal
+            filename = os.path.basename(filename)
+            filename = f"Tribecbot/Champs/{filename}"
+
+            try:
+                import boto3
+                from botocore.config import Config as BotocoreConfig
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=do_region,
+                    endpoint_url=f"https://{do_region}.digitaloceanspaces.com",
+                    aws_access_key_id=do_key,
+                    aws_secret_access_key=do_secret,
+                    config=BotocoreConfig(signature_version="s3v4")
+                )
+                presigned_url = s3.generate_presigned_url(
+                    "put_object",
+                    Params={
+                        "Bucket": do_bucket,
+                        "Key": filename,
+                        "ContentType": "application/octet-stream"
+                    },
+                    ExpiresIn=900  # 15 minutes
+                )
+                json_string = json.dumps({"url": presigned_url}, separators=(',', ':'))
+                self._send_response_with_compression(200, "application/json", json_string.encode("utf-8"))
+            except ImportError:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"boto3 is required for cloud upload. Run: pip install boto3")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(f"Failed to generate upload URL: {e}".encode("utf-8"))
+
         # Serve everything else
         else:
             filepath = self.translate_path(self.path.removeprefix(WEBROOT))

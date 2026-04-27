@@ -237,6 +237,13 @@ async function openUploadAsset() {
   port.postMessage(null);
 }
 
+async function openUploadLog() {
+  let port = await openPopupWindow("www/uploadLog.html", [360, 120], "pixels", () => {
+    closePopupWindow();
+  });
+  port.postMessage(null);
+}
+
 async function initHub() {
   // Create message ports
   const channel = new MessageChannel();
@@ -458,6 +465,12 @@ async function handleHubMessage(message: NamedMessage) {
                 content: `Upload Asset`,
                 callback() {
                   openUploadAsset();
+                }
+              },
+              {
+                content: `Upload Log`,
+                callback() {
+                  openUploadLog();
                 }
               }
             ];

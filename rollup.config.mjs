@@ -145,7 +145,10 @@ const smallRendererBundles = [
   bundle("licenses.ts", "licenses.js", false, false),
   bundle("download.ts", "download.js", false, false),
   ...(isLite
-    ? [bundle("uploadAsset.ts", "uploadAsset.js", false, false)]
+    ? [
+        bundle("uploadAsset.ts", "uploadAsset.js", false, false),
+        bundle("uploadLog.ts", "uploadLog.js", false, false)
+      ]
     : [bundle("export.ts", "export.js", false, false)])
 ];
 const workerBundles = [
