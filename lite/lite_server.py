@@ -185,6 +185,155 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(f"Failed to generate upload URL: {e}".encode("utf-8"))
 
+        # List all log files from DigitalOcean Spaces under Tribecbot/ (recursive)
+        elif request.path == WEBROOT + "/cloud-browse" or request.path == WEBROOT + "/cloud-browse/":
+            do_key = os.environ.get("DO_SPACES_KEY")
+            do_secret = os.environ.get("DO_SPACES_SECRET")
+            do_region = os.environ.get("DO_SPACES_REGION")
+            do_bucket = os.environ.get("DO_SPACES_BUCKET")
+
+            if not all([do_key, do_secret, do_region, do_bucket]):
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Cloud logs not configured. Set DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_REGION, and DO_SPACES_BUCKET environment variables.")
+                return
+
+            try:
+                import boto3
+                from botocore.config import Config as BotocoreConfig
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=do_region,
+                    endpoint_url=f"https://{do_region}.digitaloceanspaces.com",
+                    aws_access_key_id=do_key,
+                    aws_secret_access_key=do_secret,
+                    config=BotocoreConfig(signature_version="s3v4")
+                )
+                CLOUD_PREFIX = "Tribecbot/"
+                paginator = s3.get_paginator("list_objects_v2")
+                files = []
+                for page in paginator.paginate(Bucket=do_bucket, Prefix=CLOUD_PREFIX):
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        # relative path from Tribecbot/
+                        rel = key[len(CLOUD_PREFIX):]
+                        # skip folder placeholder entries (end with /)
+                        if not rel or rel.endswith("/"):
+                            continue
+                        if any(rel.endswith(suffix) for suffix in ALLOWED_LOG_SUFFIXES):
+                            files.append({"key": rel, "size": obj["Size"]})
+                json_string = json.dumps(files, separators=(',', ':'))
+                self._send_response_with_compression(200, "application/json", json_string.encode("utf-8"))
+            except ImportError:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"boto3 is required for cloud logs. Run: pip install boto3")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(f"Failed to list cloud logs: {e}".encode("utf-8"))
+
+        # Check if a log filename exists in Tribecbot/Champs/
+        elif request.path == WEBROOT + "/cloud-exists" or request.path == WEBROOT + "/cloud-exists/":
+            do_key = os.environ.get("DO_SPACES_KEY")
+            do_secret = os.environ.get("DO_SPACES_SECRET")
+            do_region = os.environ.get("DO_SPACES_REGION")
+            do_bucket = os.environ.get("DO_SPACES_BUCKET")
+
+            if not all([do_key, do_secret, do_region, do_bucket]):
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Cloud logs not configured.")
+                return
+
+            filename = query.get("filename", [""])[0]
+            filename = os.path.basename(filename)
+            if not filename or not any(filename.endswith(suffix) for suffix in ALLOWED_LOG_SUFFIXES):
+                self.send_error(400, "Invalid filename")
+                return
+
+            target_key = f"Tribecbot/Champs/{filename}"
+
+            try:
+                import boto3
+                from botocore.config import Config as BotocoreConfig
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=do_region,
+                    endpoint_url=f"https://{do_region}.digitaloceanspaces.com",
+                    aws_access_key_id=do_key,
+                    aws_secret_access_key=do_secret,
+                    config=BotocoreConfig(signature_version="s3v4")
+                )
+
+                response = s3.list_objects_v2(Bucket=do_bucket, Prefix=target_key, MaxKeys=1)
+                exists = any(obj.get("Key") == target_key for obj in response.get("Contents", []))
+                json_string = json.dumps({"exists": exists}, separators=(',', ':'))
+                self._send_response_with_compression(200, "application/json", json_string.encode("utf-8"))
+            except ImportError:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"boto3 is required for cloud logs. Run: pip install boto3")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(f"Failed to check cloud log existence: {e}".encode("utf-8"))
+
+        # Proxy a log file from DigitalOcean Spaces
+        elif request.path.startswith(WEBROOT + "/cloud-log/"):
+            do_key = os.environ.get("DO_SPACES_KEY")
+            do_secret = os.environ.get("DO_SPACES_SECRET")
+            do_region = os.environ.get("DO_SPACES_REGION")
+            do_bucket = os.environ.get("DO_SPACES_BUCKET")
+
+            if not all([do_key, do_secret, do_region, do_bucket]):
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Cloud logs not configured.")
+                return
+
+            raw_rel = urllib.parse.unquote(request.path[len(WEBROOT + "/cloud-log/"):])
+            # Sanitize: disallow empty paths, path traversal components, and non-log extensions
+            if not raw_rel or ".." in raw_rel.split("/") or not any(raw_rel.endswith(suffix) for suffix in ALLOWED_LOG_SUFFIXES):
+                self.send_error(400, "Invalid log path")
+                return
+
+            key = f"Tribecbot/{raw_rel}"
+            try:
+                import boto3
+                from botocore.config import Config as BotocoreConfig
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=do_region,
+                    endpoint_url=f"https://{do_region}.digitaloceanspaces.com",
+                    aws_access_key_id=do_key,
+                    aws_secret_access_key=do_secret,
+                    config=BotocoreConfig(signature_version="s3v4")
+                )
+                obj = s3.get_object(Bucket=do_bucket, Key=key)
+                file_content = obj["Body"].read()
+                self._send_response_with_compression(200, "application/octet-stream", file_content)
+            except ImportError:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"boto3 is required for cloud logs. Run: pip install boto3")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(f"Failed to fetch cloud log: {e}".encode("utf-8"))
+
         # Serve everything else
         else:
             filepath = self.translate_path(self.path.removeprefix(WEBROOT))

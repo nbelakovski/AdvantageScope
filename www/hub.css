@@ -19,6 +19,7 @@
   --show-feedback-button: 0;
   --show-loading-glow: 0;
   --loading-glow-progress: 1;
+  --viewer-log-title-height: 22px;
 }
 
 /* Title bar layout */
@@ -938,9 +939,101 @@ button.add-tab {
 
 /* Timeline */
 
-div.timeline {
+div.viewer-log-title {
   position: absolute;
   top: 50px;
+  left: 10px;
+  right: 10px;
+  height: var(--viewer-log-title-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  z-index: 5;
+  user-select: none;
+}
+
+span.viewer-log-title-text {
+  line-height: var(--viewer-log-title-height);
+  max-width: calc(100% - 42px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.viewer-log-cloud {
+  position: static;
+  width: 60px;
+  height: 60px;
+  min-width: 60px;
+  border-radius: 6px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
+span.viewer-log-cloud-glyph {
+  position: relative;
+  top: -1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+span.viewer-log-cloud-glyph svg {
+  width: 21px;
+  height: 21px;
+}
+
+button.viewer-log-cloud.upload-needed span.viewer-log-cloud-glyph {
+  color: #6f6f6f;
+}
+
+button.viewer-log-cloud.uploading span.viewer-log-cloud-glyph {
+  color: #1f78d1;
+  animation: cloud-upload-spin 0.9s linear infinite;
+}
+
+button.viewer-log-cloud.synced span.viewer-log-cloud-glyph {
+  color: #1f9a4a;
+}
+
+@keyframes cloud-upload-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  div.viewer-log-title {
+    color: #eee;
+  }
+
+  button.viewer-log-cloud.upload-needed span.viewer-log-cloud-glyph {
+    color: #c5c5c5;
+  }
+
+  button.viewer-log-cloud.uploading span.viewer-log-cloud-glyph {
+    color: #5eb6ff;
+  }
+
+  button.viewer-log-cloud.synced span.viewer-log-cloud-glyph {
+    color: #4bc970;
+  }
+}
+
+div.timeline {
+  position: absolute;
+  top: calc(50px + var(--viewer-log-title-height));
   height: calc(32px * var(--show-timeline));
   left: 10px;
   right: 10px;
@@ -993,7 +1086,7 @@ div.renderer-content {
   position: absolute;
   left: 0%;
   width: 100%;
-  top: calc(50px + var(--show-timeline) * 42px);
+  top: calc(50px + var(--viewer-log-title-height) + var(--show-timeline) * 42px);
   bottom: var(--tab-controls-height);
 }
 

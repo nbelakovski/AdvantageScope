@@ -249,6 +249,12 @@ function handleMainMessage(message: NamedMessage) {
           }
         });
 
+        item.addEventListener("dblclick", () => {
+          if (!file.isFolder) {
+            sendMainMessage("save", [file.name]);
+          }
+        });
+
         let img = document.createElement("img");
         item.appendChild(img);
         if (file.isFolder) {

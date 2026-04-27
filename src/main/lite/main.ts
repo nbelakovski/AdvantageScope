@@ -237,6 +237,20 @@ async function openUploadAsset() {
   port.postMessage(null);
 }
 
+/** Opens a popup window for browsing and opening logs from the cloud. */
+function openCloudBrowser() {
+  openPopupWindow("www/cloudBrowser.html", [35, 65], "percent", (message, port) => {
+    void port; // no incoming messages needed
+    if (message === null) {
+      closePopupWindow();
+    } else if (Array.isArray(message)) {
+      closePopupWindow();
+      const cloudFiles: string[] = (message as string[]).map((key) => `cloud:${key}`);
+      sendMessage(hubPort, "open-files", { files: cloudFiles, merge: false });
+    }
+  });
+}
+
 async function openUploadLog() {
   let port = await openPopupWindow("www/uploadLog.html", [360, 120], "pixels", () => {
     closePopupWindow();
@@ -336,11 +350,18 @@ async function handleHubMessage(message: NamedMessage) {
         const uuid: string = message.data.uuid;
         const path: string = message.data.path;
 
-        let prefs = DEFAULT_PREFS;
-        let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
-        if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
+        let fetchUrl: string;
+        if (path.startsWith("cloud:")) {
+          const relKey = path.slice("cloud:".length);
+          fetchUrl = `cloud-log/${relKey.split("/").map(encodeURIComponent).join("/")}`;
+        } else {
+          let prefs = DEFAULT_PREFS;
+          let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
+          if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
+          fetchUrl = `logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`;
+        }
 
-        let response = await fetch(`logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`);
+        let response = await fetch(fetchUrl);
         let buffer = await response.arrayBuffer();
         let array = new Uint8Array(buffer);
 
@@ -349,6 +370,94 @@ async function handleHubMessage(message: NamedMessage) {
           error: null,
           uuid: uuid
         });
+      }
+      break;
+
+    case "upload-log-to-cloud":
+      {
+        const path: string = message.data.path;
+        const normalizedPath = path.replaceAll("\\", "/");
+
+        if (normalizedPath.startsWith("cloud:") || normalizedPath.includes("Tribecbot/Champs/")) {
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "synced" });
+          break;
+        }
+
+        sendMessage(hubPort, "cloud-upload-status", { path, status: "uploading" });
+
+        try {
+          let prefs = DEFAULT_PREFS;
+          let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
+          if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
+
+          const sourceResponse = await fetch(
+            `logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`
+          );
+          if (!sourceResponse.ok) {
+            throw new Error(sourceResponse.statusText || "Failed to read local log");
+          }
+
+          const filename = normalizedPath.split("/").pop();
+          if (!filename) {
+            throw new Error("Invalid filename");
+          }
+
+          const urlResponse = await fetch(`/www/upload-log-url?filename=${encodeURIComponent(filename)}`);
+          if (!urlResponse.ok) {
+            const text = await urlResponse.text();
+            throw new Error(text || urlResponse.statusText || "Failed to get upload URL");
+          }
+          const { url } = (await urlResponse.json()) as { url: string };
+
+          const uploadResponse = await fetch(url, {
+            method: "PUT",
+            body: await sourceResponse.arrayBuffer(),
+            headers: {
+              "Content-Type": "application/octet-stream"
+            }
+          });
+          if (!uploadResponse.ok) {
+            throw new Error(uploadResponse.statusText || `Upload failed (${uploadResponse.status})`);
+          }
+
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "synced" });
+        } catch (e) {
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "failed" });
+          alert("Failed to upload log to cloud: " + (e instanceof Error ? e.message : String(e)));
+        }
+      }
+      break;
+
+    case "check-cloud-log":
+      {
+        const path: string = message.data.path;
+        const normalizedPath = path.replaceAll("\\", "/");
+        if (normalizedPath.startsWith("cloud:")) {
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "synced" });
+          break;
+        }
+
+        const filename = normalizedPath.split("/").pop();
+        if (!filename) {
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "missing" });
+          break;
+        }
+
+        try {
+          const response = await fetch(`/cloud-exists?filename=${encodeURIComponent(filename)}`);
+          if (!response.ok) {
+            sendMessage(hubPort, "cloud-upload-status", { path, status: "missing" });
+            break;
+          }
+
+          const data = (await response.json()) as { exists: boolean };
+          sendMessage(hubPort, "cloud-upload-status", {
+            path,
+            status: data.exists ? "synced" : "missing"
+          });
+        } catch {
+          sendMessage(hubPort, "cloud-upload-status", { path, status: "missing" });
+        }
       }
       break;
 
@@ -439,6 +548,12 @@ async function handleHubMessage(message: NamedMessage) {
                 content: `Open Log (\u21e7 ${modifier} O)`,
                 callback() {
                   openDownload();
+                }
+              },
+              {
+                content: `Open Cloud Log (\u21e7 ${modifier} C)`,
+                callback() {
+                  openCloudBrowser();
                 }
               },
               {
@@ -1198,6 +1313,8 @@ function processKeydown(event: KeyboardEvent): boolean {
   let lowerKey = event.key.toLowerCase();
   if (event.shiftKey && event.metaKey && lowerKey === "o") {
     openDownload();
+  } else if (event.shiftKey && event.metaKey && lowerKey === "c") {
+    openCloudBrowser();
   } else if (!event.shiftKey && event.metaKey && lowerKey === "k") {
     sendMessage(hubPort, "start-live", false);
   } else if (!event.shiftKey && event.metaKey && lowerKey === "\\") {

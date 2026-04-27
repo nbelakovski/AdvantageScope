@@ -36,6 +36,13 @@ const TYPE_MEMORY_SAVE_PERIOD_MS = 1000;
 const DRAG_ITEM = document.getElementById("dragItem") as HTMLElement;
 const UPDATE_BUTTON = document.getElementsByClassName("update")[0] as HTMLElement;
 const FEEDBACK_BUTTON = document.getElementsByClassName("feedback")[0] as HTMLElement;
+const VIEWER_LOG_TITLE_TEXT = document.getElementsByClassName("viewer-log-title-text")[0] as HTMLElement;
+const VIEWER_LOG_CLOUD_BUTTON = document.getElementsByClassName("viewer-log-cloud")[0] as HTMLButtonElement;
+const VIEWER_LOG_CLOUD_GLYPH = document.getElementsByClassName("viewer-log-cloud-glyph")[0] as HTMLElement;
+const BOOTSTRAP_CLOUD_UPLOAD_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M4.406 1.342A5.53 5.53 0 0 1 8 0c2.69 0 4.923 2 5.166 4.579C14.758 4.804 16 6.137 16 7.773 16 9.569 14.502 11 12.687 11H10a.5.5 0 0 1 0-1h2.688C13.979 10 15 8.988 15 7.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 2.825 10.328 1 8 1a4.53 4.53 0 0 0-2.941 1.1c-.757.652-1.153 1.438-1.153 2.055v.448l-.445.049C2.064 4.805 1 5.952 1 7.318 1 8.785 2.23 10 3.781 10H6a.5.5 0 0 1 0 1H3.781C1.708 11 0 9.366 0 7.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383"/><path fill-rule="evenodd" d="M7.646 4.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 5.707V14.5a.5.5 0 0 1-1 0V5.707L5.354 7.854a.5.5 0 1 1-.708-.708z"/></svg>';
+const BOOTSTRAP_CLOUD_CHECK_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M10.354 6.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7 8.793l2.646-2.647a.5.5 0 0 1 .708 0"/><path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.773 16 11.569 14.502 13 12.687 13H3.781C1.708 13 0 11.366 0 9.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383m.653.757c-.757.653-1.153 1.44-1.153 2.056v.448l-.445.049C2.064 6.805 1 7.952 1 9.318 1 10.785 2.23 12 3.781 12h8.906C13.98 12 15 10.988 15 9.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 4.825 10.328 3 8 3a4.53 4.53 0 0 0-2.941 1.1z"/></svg>';
 
 // Global variables
 declare global {
@@ -113,12 +120,65 @@ let dragLastX = 0;
 let dragLastY = 0;
 let dragData: any = null;
 
+type ViewerCloudStatus = "hidden" | "upload-needed" | "uploading" | "synced";
+let viewerCloudStatus: ViewerCloudStatus = "hidden";
+let viewerCloudPath: string | null = null;
+let uploadedLocalPaths = new Set<string>();
+
 // WINDOW UTILITIES
 
 function setWindowTitle(name: string, status?: string) {
   let title = htmlEncode(name) + (status ? " (" + htmlEncode(status) + ")" : "") + " &mdash; AdvantageScope";
   document.getElementsByTagName("title")[0].innerHTML = title;
   document.getElementsByClassName("title-bar-text")[0].innerHTML = title;
+}
+
+function setViewerLogTitle(name: string | null) {
+  VIEWER_LOG_TITLE_TEXT.textContent = name ?? "";
+}
+
+function isCloudSyncedPath(path: string): boolean {
+  const normalized = path.replaceAll("\\", "/");
+  return normalized.startsWith("cloud:");
+}
+
+function updateViewerCloudButton() {
+  VIEWER_LOG_CLOUD_BUTTON.classList.remove("upload-needed", "uploading", "synced");
+  if (viewerCloudStatus === "hidden") {
+    VIEWER_LOG_CLOUD_BUTTON.hidden = true;
+    VIEWER_LOG_CLOUD_BUTTON.disabled = true;
+    VIEWER_LOG_CLOUD_GLYPH.innerHTML = "";
+    return;
+  }
+
+  VIEWER_LOG_CLOUD_BUTTON.hidden = false;
+  VIEWER_LOG_CLOUD_BUTTON.classList.add(viewerCloudStatus);
+  if (viewerCloudStatus === "upload-needed") {
+    VIEWER_LOG_CLOUD_BUTTON.disabled = false;
+    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
+    VIEWER_LOG_CLOUD_BUTTON.title = "Upload to cloud";
+  } else if (viewerCloudStatus === "uploading") {
+    VIEWER_LOG_CLOUD_BUTTON.disabled = true;
+    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
+    VIEWER_LOG_CLOUD_BUTTON.title = "Uploading to cloud";
+  } else {
+    VIEWER_LOG_CLOUD_BUTTON.disabled = true;
+    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_CHECK_ICON;
+    VIEWER_LOG_CLOUD_BUTTON.title = "Synced to cloud";
+  }
+}
+
+function setViewerCloudStatusForPath(path: string | null) {
+  viewerCloudPath = path;
+  if (path === null || historicalSources.length !== 1) {
+    viewerCloudStatus = "hidden";
+  } else if (isCloudSyncedPath(path) || uploadedLocalPaths.has(path)) {
+    viewerCloudStatus = "synced";
+  } else {
+    viewerCloudStatus = "upload-needed";
+    window.sendMainMessage("check-cloud-log", { path: path });
+  }
+  updateViewerCloudButton();
 }
 
 /** Shows or hides the loading indicator and updates progress. Pass "null" to disable loading indicator. */
@@ -260,6 +320,13 @@ window.addEventListener("touchend", () => {
   dragEnd();
 });
 
+VIEWER_LOG_CLOUD_BUTTON.addEventListener("click", () => {
+  if (viewerCloudStatus !== "upload-needed" || viewerCloudPath === null) return;
+  viewerCloudStatus = "uploading";
+  updateViewerCloudButton();
+  window.sendMainMessage("upload-log-to-cloud", { path: viewerCloudPath });
+});
+
 // FPS MEASUREMENT
 
 const fpsDiv = document.getElementsByClassName("fps")[0] as HTMLElement;
@@ -360,6 +427,8 @@ function startHistorical(path: string, clear = true, merge = false) {
       } else {
         logFriendlyName = historicalSources.length.toString() + " Log Files";
       }
+      setViewerLogTitle(logFriendlyName);
+      setViewerCloudStatusForPath(historicalSources.length === 1 ? historicalSources[0].path : null);
       switch (status) {
         case HistoricalDataSourceStatus.Reading:
         case HistoricalDataSourceStatus.DecodingInitial:
@@ -421,6 +490,8 @@ function startLive(isSim = false) {
   liveSource?.stop();
   publisher?.stop();
   liveActive = true;
+  setViewerLogTitle(null);
+  setViewerCloudStatusForPath(null);
   setLoading(null);
 
   if (!window.preferences) return;
@@ -723,6 +794,29 @@ async function handleMainMessage(message: NamedMessage) {
     case "show-feedback-button":
       document.documentElement.style.setProperty("--show-feedback-button", message.data ? "1" : "0");
       FEEDBACK_BUTTON.hidden = !message.data;
+      break;
+
+    case "cloud-upload-status":
+      if (message.data.status === "synced") {
+        uploadedLocalPaths.add(message.data.path);
+      }
+      if (viewerCloudPath === message.data.path) {
+        switch (message.data.status) {
+          case "uploading":
+            viewerCloudStatus = "uploading";
+            break;
+          case "synced":
+            viewerCloudStatus = "synced";
+            break;
+          case "missing":
+            viewerCloudStatus = "upload-needed";
+            break;
+          case "failed":
+            viewerCloudStatus = "upload-needed";
+            break;
+        }
+        updateViewerCloudButton();
+      }
       break;
 
     case "historical-data":
