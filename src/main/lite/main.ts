@@ -648,7 +648,7 @@ async function handleHubMessage(message: NamedMessage) {
             if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
             menuItems = [
               {
-                content: `Open Log (\u21e7 ${modifier} O)`,
+                content: `Open Local Log (\u21e7 ${modifier} O)`,
                 callback() {
                   openDownload();
                 }
