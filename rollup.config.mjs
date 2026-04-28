@@ -147,7 +147,8 @@ const smallRendererBundles = [
     ? [
         bundle("uploadAsset.ts", "uploadAsset.js", false, false),
         bundle("uploadLog.ts", "uploadLog.js", false, false),
-        bundle("cloudBrowser.ts", "cloudBrowser.js", false, false)
+        bundle("cloudBrowser.ts", "cloudBrowser.js", false, false),
+        bundle("bulkCloudUpload.ts", "bulkCloudUpload.js", false, false)
       ]
     : [
         bundle("download.ts", "download.js", false, false),

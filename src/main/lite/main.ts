@@ -297,6 +297,14 @@ async function openUploadLog() {
   port.postMessage(null);
 }
 
+/** Opens a popup window for bulk cloud upload. */
+async function openBulkCloudUpload() {
+  let port = await openPopupWindow("www/bulkCloudUpload.html", [500, 500], "pixels", () => {
+    closePopupWindow();
+  });
+  port.postMessage(null);
+}
+
 async function initHub() {
   // Create message ports
   const channel = new MessageChannel();
@@ -688,6 +696,12 @@ async function handleHubMessage(message: NamedMessage) {
                 content: `Upload Log`,
                 callback() {
                   openUploadLog();
+                }
+              },
+              {
+                content: `Bulk Cloud Upload`,
+                callback() {
+                  openBulkCloudUpload();
                 }
               }
             ];
