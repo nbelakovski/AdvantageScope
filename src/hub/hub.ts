@@ -39,6 +39,7 @@ const FEEDBACK_BUTTON = document.getElementsByClassName("feedback")[0] as HTMLEl
 const VIEWER_LOG_TITLE_TEXT = document.getElementsByClassName("viewer-log-title-text")[0] as HTMLElement;
 const VIEWER_LOG_CLOUD_BUTTON = document.getElementsByClassName("viewer-log-cloud")[0] as HTMLButtonElement;
 const VIEWER_LOG_CLOUD_GLYPH = document.getElementsByClassName("viewer-log-cloud-glyph")[0] as HTMLElement;
+const VIEWER_LOG_CLOUD_PROGRESS = document.getElementsByClassName("viewer-log-cloud-progress")[0] as HTMLElement;
 const BOOTSTRAP_CLOUD_UPLOAD_ICON =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M4.406 1.342A5.53 5.53 0 0 1 8 0c2.69 0 4.923 2 5.166 4.579C14.758 4.804 16 6.137 16 7.773 16 9.569 14.502 11 12.687 11H10a.5.5 0 0 1 0-1h2.688C13.979 10 15 8.988 15 7.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 2.825 10.328 1 8 1a4.53 4.53 0 0 0-2.941 1.1c-.757.652-1.153 1.438-1.153 2.055v.448l-.445.049C2.064 4.805 1 5.952 1 7.318 1 8.785 2.23 10 3.781 10H6a.5.5 0 0 1 0 1H3.781C1.708 11 0 9.366 0 7.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383"/><path fill-rule="evenodd" d="M7.646 4.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 5.707V14.5a.5.5 0 0 1-1 0V5.707L5.354 7.854a.5.5 0 1 1-.708-.708z"/></svg>';
 const BOOTSTRAP_CLOUD_CHECK_ICON =
@@ -123,7 +124,12 @@ let dragData: any = null;
 type ViewerCloudStatus = "hidden" | "upload-needed" | "uploading" | "synced";
 let viewerCloudStatus: ViewerCloudStatus = "hidden";
 let viewerCloudPath: string | null = null;
+type ViewerCloudGlyph = "none" | "upload" | "check";
+let viewerCloudGlyph: ViewerCloudGlyph = "none";
+let viewerCloudUploadPercent: number | null = null;
 let uploadedLocalPaths = new Set<string>();
+let viewerLogTitlePath: string | null = null;
+let viewerLogTitleSize: string | null = null;
 
 // WINDOW UTILITIES
 
@@ -133,8 +139,19 @@ function setWindowTitle(name: string, status?: string) {
   document.getElementsByClassName("title-bar-text")[0].innerHTML = title;
 }
 
-function setViewerLogTitle(name: string | null) {
+function formatTitleSize(sizeBytes: number): string {
+  const sizeMb = sizeBytes / 1e6;
+  return (sizeMb < 0.1 ? "<0.1" : (Math.round(sizeMb * 10) / 10).toString()) + " MB";
+}
+
+function setViewerLogTitle(name: string | null, path: string | null = null) {
+  viewerLogTitlePath = path;
+  viewerLogTitleSize = null;
   VIEWER_LOG_TITLE_TEXT.textContent = name ?? "";
+
+  if (name !== null && path !== null) {
+    window.sendMainMessage("check-log-size", { path: path });
+  }
 }
 
 function isCloudSyncedPath(path: string): boolean {
@@ -143,39 +160,75 @@ function isCloudSyncedPath(path: string): boolean {
 }
 
 function updateViewerCloudButton() {
-  VIEWER_LOG_CLOUD_BUTTON.classList.remove("upload-needed", "uploading", "synced");
+  VIEWER_LOG_CLOUD_BUTTON.classList.toggle("upload-needed", viewerCloudStatus === "upload-needed");
+  VIEWER_LOG_CLOUD_BUTTON.classList.toggle("uploading", viewerCloudStatus === "uploading");
+  VIEWER_LOG_CLOUD_BUTTON.classList.toggle("synced", viewerCloudStatus === "synced");
+
   if (viewerCloudStatus === "hidden") {
     VIEWER_LOG_CLOUD_BUTTON.hidden = true;
     VIEWER_LOG_CLOUD_BUTTON.disabled = true;
-    VIEWER_LOG_CLOUD_GLYPH.innerHTML = "";
+    VIEWER_LOG_CLOUD_PROGRESS.hidden = true;
+    VIEWER_LOG_CLOUD_PROGRESS.textContent = "";
+    if (viewerCloudGlyph !== "none") {
+      VIEWER_LOG_CLOUD_GLYPH.innerHTML = "";
+      viewerCloudGlyph = "none";
+    }
     return;
   }
 
   VIEWER_LOG_CLOUD_BUTTON.hidden = false;
-  VIEWER_LOG_CLOUD_BUTTON.classList.add(viewerCloudStatus);
   if (viewerCloudStatus === "upload-needed") {
     VIEWER_LOG_CLOUD_BUTTON.disabled = false;
-    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
+    viewerCloudUploadPercent = null;
+    VIEWER_LOG_CLOUD_PROGRESS.hidden = true;
+    VIEWER_LOG_CLOUD_PROGRESS.textContent = "";
+    if (viewerCloudGlyph !== "upload") {
+      VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
+      viewerCloudGlyph = "upload";
+    }
     VIEWER_LOG_CLOUD_BUTTON.title = "Upload to cloud";
   } else if (viewerCloudStatus === "uploading") {
     VIEWER_LOG_CLOUD_BUTTON.disabled = true;
-    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
-    VIEWER_LOG_CLOUD_BUTTON.title = "Uploading to cloud";
+    if (viewerCloudUploadPercent === null) {
+      VIEWER_LOG_CLOUD_PROGRESS.hidden = true;
+      VIEWER_LOG_CLOUD_PROGRESS.textContent = "";
+    } else {
+      VIEWER_LOG_CLOUD_PROGRESS.hidden = false;
+      VIEWER_LOG_CLOUD_PROGRESS.textContent = `${viewerCloudUploadPercent}%`;
+    }
+    if (viewerCloudGlyph !== "upload") {
+      VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_UPLOAD_ICON;
+      viewerCloudGlyph = "upload";
+    }
+    VIEWER_LOG_CLOUD_BUTTON.title =
+      viewerCloudUploadPercent === null ? "Uploading to cloud" : `Uploading to cloud (${viewerCloudUploadPercent}%)`;
   } else {
     VIEWER_LOG_CLOUD_BUTTON.disabled = true;
-    VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_CHECK_ICON;
+    viewerCloudUploadPercent = null;
+    VIEWER_LOG_CLOUD_PROGRESS.hidden = true;
+    VIEWER_LOG_CLOUD_PROGRESS.textContent = "";
+    if (viewerCloudGlyph !== "check") {
+      VIEWER_LOG_CLOUD_GLYPH.innerHTML = BOOTSTRAP_CLOUD_CHECK_ICON;
+      viewerCloudGlyph = "check";
+    }
     VIEWER_LOG_CLOUD_BUTTON.title = "Synced to cloud";
   }
 }
 
 function setViewerCloudStatusForPath(path: string | null) {
+  const keepUploading = viewerCloudStatus === "uploading" && viewerCloudPath !== null && viewerCloudPath === path;
   viewerCloudPath = path;
   if (path === null || historicalSources.length !== 1) {
     viewerCloudStatus = "hidden";
+    viewerCloudUploadPercent = null;
+  } else if (keepUploading) {
+    viewerCloudStatus = "uploading";
   } else if (isCloudSyncedPath(path) || uploadedLocalPaths.has(path)) {
     viewerCloudStatus = "synced";
+    viewerCloudUploadPercent = null;
   } else {
     viewerCloudStatus = "upload-needed";
+    viewerCloudUploadPercent = null;
     window.sendMainMessage("check-cloud-log", { path: path });
   }
   updateViewerCloudButton();
@@ -323,6 +376,7 @@ window.addEventListener("touchend", () => {
 VIEWER_LOG_CLOUD_BUTTON.addEventListener("click", () => {
   if (viewerCloudStatus !== "upload-needed" || viewerCloudPath === null) return;
   viewerCloudStatus = "uploading";
+  viewerCloudUploadPercent = 0;
   updateViewerCloudButton();
   window.sendMainMessage("upload-log-to-cloud", { path: viewerCloudPath });
 });
@@ -427,7 +481,7 @@ function startHistorical(path: string, clear = true, merge = false) {
       } else {
         logFriendlyName = historicalSources.length.toString() + " Log Files";
       }
-      setViewerLogTitle(logFriendlyName);
+      setViewerLogTitle(logFriendlyName, historicalSources.length === 1 ? historicalSources[0].path : null);
       setViewerCloudStatusForPath(historicalSources.length === 1 ? historicalSources[0].path : null);
       switch (status) {
         case HistoricalDataSourceStatus.Reading:
@@ -490,7 +544,7 @@ function startLive(isSim = false) {
   liveSource?.stop();
   publisher?.stop();
   liveActive = true;
-  setViewerLogTitle(null);
+  setViewerLogTitle(null, null);
   setViewerCloudStatusForPath(null);
   setLoading(null);
 
@@ -804,18 +858,33 @@ async function handleMainMessage(message: NamedMessage) {
         switch (message.data.status) {
           case "uploading":
             viewerCloudStatus = "uploading";
+            if (typeof message.data.percent === "number") {
+              viewerCloudUploadPercent = Math.max(0, Math.min(100, Math.round(message.data.percent)));
+            }
             break;
           case "synced":
             viewerCloudStatus = "synced";
+            viewerCloudUploadPercent = null;
             break;
           case "missing":
-            viewerCloudStatus = "upload-needed";
+            if (viewerCloudStatus !== "uploading") {
+              viewerCloudStatus = "upload-needed";
+              viewerCloudUploadPercent = null;
+            }
             break;
           case "failed":
             viewerCloudStatus = "upload-needed";
+            viewerCloudUploadPercent = null;
             break;
         }
         updateViewerCloudButton();
+      }
+      break;
+
+    case "log-size-response":
+      if (viewerLogTitlePath === message.data.path && logFriendlyName !== null && typeof message.data.sizeBytes === "number") {
+        viewerLogTitleSize = formatTitleSize(message.data.sizeBytes);
+        VIEWER_LOG_TITLE_TEXT.textContent = `${logFriendlyName} (${viewerLogTitleSize})`;
       }
       break;
 

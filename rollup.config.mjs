@@ -143,14 +143,16 @@ const smallRendererBundles = [
   bundle("betaWelcome.ts", "betaWelcome.js", false, false),
   bundle("preferences.ts", "preferences.js", false, false),
   bundle("licenses.ts", "licenses.js", false, false),
-  bundle("download.ts", "download.js", false, false),
   ...(isLite
     ? [
         bundle("uploadAsset.ts", "uploadAsset.js", false, false),
         bundle("uploadLog.ts", "uploadLog.js", false, false),
         bundle("cloudBrowser.ts", "cloudBrowser.js", false, false)
       ]
-    : [bundle("export.ts", "export.js", false, false)])
+    : [
+        bundle("download.ts", "download.js", false, false),
+        bundle("export.ts", "export.js", false, false)
+      ])
 ];
 const workerBundles = [
   bundle("hub/dataSources/csv/csvWorker.ts", "hub$csvWorker.js", false, false),

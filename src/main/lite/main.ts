@@ -39,12 +39,80 @@ let POINTER_BLOCK: HTMLElement;
 let TOO_SMALL_WARNING: HTMLElement;
 let MOBILE_WARNING: HTMLElement;
 let MENU_ANCHOR: HTMLElement;
+let OPEN_LOG_INPUT: HTMLInputElement;
 
 let hubPort: MessagePort | null = null;
 let popupMenu = new TinyPopupMenu();
 let assetsPromise: Promise<AdvantageScopeAssets>;
 let downloadInterval: number | null = null;
 let popupRequiresForceClose = false;
+let logSizeCache = new Map<string, number>();
+let browserSelectedFiles = new Map<string, File>();
+let browserSelectedFileCounter = 0;
+
+interface CloudLogSelection {
+  key: string;
+  size: number;
+}
+
+function createBrowserSelectedFilePath(file: File): string {
+  return `browser-file:${browserSelectedFileCounter++}/${file.name}`;
+}
+
+function getBrowserSelectedFile(path: string): File | undefined {
+  return browserSelectedFiles.get(path);
+}
+
+function uploadWithProgress(url: string, body: Blob | ArrayBuffer, onProgress: (percent: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+    xhr.upload.onprogress = (event: ProgressEvent<EventTarget>) => {
+      const total = event.lengthComputable ? event.total : body instanceof Blob ? body.size : body.byteLength;
+      if (total > 0) {
+        const percent = Math.max(0, Math.min(100, Math.round((event.loaded / total) * 100)));
+        onProgress(percent);
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Upload failed"));
+    };
+
+    xhr.onabort = () => {
+      reject(new Error("Upload aborted"));
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(xhr.statusText || `Upload failed (${xhr.status})`));
+      }
+    };
+
+    xhr.send(body);
+  });
+}
+
+function handleOpenLogSelection() {
+  const selectedFiles = Array.from(OPEN_LOG_INPUT.files ?? []);
+  OPEN_LOG_INPUT.value = "";
+  if (selectedFiles.length === 0) {
+    return;
+  }
+
+  const files = selectedFiles.map((file) => {
+    const path = createBrowserSelectedFilePath(file);
+    browserSelectedFiles.set(path, file);
+    logSizeCache.set(path, file.size);
+    return path;
+  });
+
+  sendMessage(hubPort, "open-files", { files, merge: false });
+}
 
 /**
  * Open a new popup menu
@@ -184,48 +252,7 @@ function openPreferences() {
 
 /** Opens a popup window for downloading logs. */
 function openDownload() {
-  openPopupWindow("www/download.html", [35, 65], "percent", (message, port) => {
-    switch ((message as NamedMessage).name) {
-      case "start":
-        let path: string = message.data.path;
-        let updateList = async () => {
-          let response: Response;
-          try {
-            response = await fetch(`logs?folder=${encodeURIComponent(path)}`);
-          } catch (e) {
-            sendMessage(port, "show-error", "Fetch failed");
-            return;
-          }
-          if (!response.ok) {
-            if (response.status === 404) {
-              sendMessage(port, "show-error", "No such file");
-            } else {
-              sendMessage(port, "show-error", response.statusText);
-            }
-          } else {
-            sendMessage(port, "set-list", await response.json());
-          }
-        };
-        updateList();
-        downloadInterval = window.setInterval(() => updateList(), 3000);
-        break;
-
-      case "close":
-        closePopupWindow();
-        break;
-
-      case "save":
-        closePopupWindow();
-        sendMessage(hubPort, "open-files", { files: message.data, merge: false });
-        break;
-    }
-  }).then((port) => {
-    let prefs = DEFAULT_PREFS;
-    let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
-    if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
-    sendMessage(port, "set-platform", "lite");
-    sendMessage(port, "set-preferences", prefs);
-  });
+  OPEN_LOG_INPUT.click();
 }
 
 /** Opens a popup window for uploading assets. */
@@ -245,7 +272,19 @@ function openCloudBrowser() {
       closePopupWindow();
     } else if (Array.isArray(message)) {
       closePopupWindow();
-      const cloudFiles: string[] = (message as string[]).map((key) => `cloud:${key}`);
+      const cloudFiles: string[] = [];
+      (message as (string | CloudLogSelection)[]).forEach((entry) => {
+        if (typeof entry === "string") {
+          cloudFiles.push(`cloud:${entry}`);
+        } else if (entry !== null && typeof entry === "object" && "key" in entry) {
+          const typed = entry as CloudLogSelection;
+          const path = `cloud:${typed.key}`;
+          cloudFiles.push(path);
+          if (typeof typed.size === "number" && typed.size >= 0) {
+            logSizeCache.set(path, typed.size);
+          }
+        }
+      });
       sendMessage(hubPort, "open-files", { files: cloudFiles, merge: false });
     }
   });
@@ -350,6 +389,18 @@ async function handleHubMessage(message: NamedMessage) {
         const uuid: string = message.data.uuid;
         const path: string = message.data.path;
 
+        const browserSelectedFile = getBrowserSelectedFile(path);
+        if (browserSelectedFile !== undefined) {
+          const buffer = await browserSelectedFile.arrayBuffer();
+          const array = new Uint8Array(buffer);
+          sendMessage(hubPort, "historical-data", {
+            files: [array],
+            error: null,
+            uuid: uuid
+          });
+          break;
+        }
+
         let fetchUrl: string;
         if (path.startsWith("cloud:")) {
           const relKey = path.slice("cloud:".length);
@@ -377,27 +428,17 @@ async function handleHubMessage(message: NamedMessage) {
       {
         const path: string = message.data.path;
         const normalizedPath = path.replaceAll("\\", "/");
+        const browserSelectedFile = getBrowserSelectedFile(path);
 
         if (normalizedPath.startsWith("cloud:") || normalizedPath.includes("Tribecbot/Champs/")) {
           sendMessage(hubPort, "cloud-upload-status", { path, status: "synced" });
           break;
         }
 
-        sendMessage(hubPort, "cloud-upload-status", { path, status: "uploading" });
+        sendMessage(hubPort, "cloud-upload-status", { path, status: "uploading", percent: 0 });
 
         try {
-          let prefs = DEFAULT_PREFS;
-          let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
-          if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
-
-          const sourceResponse = await fetch(
-            `logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`
-          );
-          if (!sourceResponse.ok) {
-            throw new Error(sourceResponse.statusText || "Failed to read local log");
-          }
-
-          const filename = normalizedPath.split("/").pop();
+          const filename = browserSelectedFile?.name ?? normalizedPath.split("/").pop();
           if (!filename) {
             throw new Error("Invalid filename");
           }
@@ -409,15 +450,32 @@ async function handleHubMessage(message: NamedMessage) {
           }
           const { url } = (await urlResponse.json()) as { url: string };
 
-          const uploadResponse = await fetch(url, {
-            method: "PUT",
-            body: await sourceResponse.arrayBuffer(),
-            headers: {
-              "Content-Type": "application/octet-stream"
+          let uploadBody: Blob | ArrayBuffer;
+          if (browserSelectedFile !== undefined) {
+            uploadBody = browserSelectedFile;
+          } else {
+            let prefs = DEFAULT_PREFS;
+            let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
+            if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
+
+            const sourceResponse = await fetch(
+              `logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`
+            );
+            if (!sourceResponse.ok) {
+              throw new Error(sourceResponse.statusText || "Failed to read local log");
+            }
+            uploadBody = await sourceResponse.arrayBuffer();
+          }
+
+          let lastPercent = -1;
+          await uploadWithProgress(url, uploadBody, (percent) => {
+            if (percent !== lastPercent) {
+              lastPercent = percent;
+              sendMessage(hubPort, "cloud-upload-status", { path, status: "uploading", percent });
             }
           });
-          if (!uploadResponse.ok) {
-            throw new Error(uploadResponse.statusText || `Upload failed (${uploadResponse.status})`);
+          if (lastPercent < 100) {
+            sendMessage(hubPort, "cloud-upload-status", { path, status: "uploading", percent: 100 });
           }
 
           sendMessage(hubPort, "cloud-upload-status", { path, status: "synced" });
@@ -458,6 +516,50 @@ async function handleHubMessage(message: NamedMessage) {
         } catch {
           sendMessage(hubPort, "cloud-upload-status", { path, status: "missing" });
         }
+      }
+      break;
+
+    case "check-log-size":
+      {
+        const path: string = message.data.path;
+        const cachedSize = logSizeCache.get(path);
+        if (cachedSize !== undefined && cachedSize >= 0) {
+          sendMessage(hubPort, "log-size-response", { path, sizeBytes: cachedSize });
+          break;
+        }
+
+        const browserSelectedFile = getBrowserSelectedFile(path);
+        if (browserSelectedFile !== undefined) {
+          sendMessage(hubPort, "log-size-response", { path, sizeBytes: browserSelectedFile.size });
+          break;
+        }
+
+        let sizeBytes = -1;
+
+        try {
+          if (path.startsWith("cloud:")) {
+            const relKey = path.slice("cloud:".length);
+            const fetchUrl = `cloud-log/${relKey.split("/").map(encodeURIComponent).join("/")}`;
+            const response = await fetch(fetchUrl);
+            if (response.ok) {
+              const buffer = await response.arrayBuffer();
+              sizeBytes = buffer.byteLength;
+            }
+          } else {
+            let prefs = DEFAULT_PREFS;
+            let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
+            if (prefsRaw !== null) mergePreferences(prefs, JSON.parse(prefsRaw));
+            const response = await fetch(`logs/${encodeURIComponent(path)}?folder=${encodeURIComponent(prefs.remotePath)}`);
+            if (response.ok) {
+              const buffer = await response.arrayBuffer();
+              sizeBytes = buffer.byteLength;
+            }
+          }
+        } catch {
+          sizeBytes = -1;
+        }
+
+        sendMessage(hubPort, "log-size-response", { path, sizeBytes });
       }
       break;
 
@@ -1369,6 +1471,13 @@ window.addEventListener("load", () => {
   TOO_SMALL_WARNING = document.getElementsByClassName("too-small")[0] as HTMLElement;
   MOBILE_WARNING = TOO_SMALL_WARNING.getElementsByClassName("mobile-warning")[0] as HTMLElement;
   MENU_ANCHOR = document.getElementsByClassName("menu-anchor")[0] as HTMLElement;
+  OPEN_LOG_INPUT = document.createElement("input");
+  OPEN_LOG_INPUT.type = "file";
+  OPEN_LOG_INPUT.multiple = true;
+  OPEN_LOG_INPUT.accept = ".wpilog,.wpilogxz,.rlog,.log";
+  OPEN_LOG_INPUT.hidden = true;
+  OPEN_LOG_INPUT.addEventListener("change", handleOpenLogSelection);
+  document.body.appendChild(OPEN_LOG_INPUT);
 
   // Set up too small warning
   let updateTooSmallWarning = () => {

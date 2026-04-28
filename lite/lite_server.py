@@ -95,26 +95,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
             self.send_error(404, "File not found")
 
-        # Serve list of logs
-        elif request.path == WEBROOT + "/logs" or request.path == WEBROOT + "/logs/":
-            files = []
-            if ENABLE_FILESYSTEM_ACCESS:
-                if "folder" in query and len(query["folder"]) > 0:
-                    folder_path = query["folder"][0]
-                    if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-                        self.send_error(404, "Requested folder does not exist")
-                        return
-                    for filename in [x for x in os.listdir(folder_path) if not x.startswith(".")]:
-                        for suffix in ALLOWED_LOG_SUFFIXES:
-                            if filename.endswith(suffix):
-                                files.append({
-                                    "name": filename,
-                                    "size": os.path.getsize(os.path.join(folder_path, filename))
-                                })
-                                break
-            json_string = json.dumps(files, separators=(',', ':'))
-            self._send_response_with_compression(200, "application/json", json_string.encode("utf-8"))
-
         # Serve log file
         elif request.path.startswith(WEBROOT + "/logs"):
             if ENABLE_FILESYSTEM_ACCESS and "folder" in query and len(query["folder"]) > 0:

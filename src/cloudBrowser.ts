@@ -135,6 +135,7 @@ window.addEventListener("message", (event) => {
 
   const messagePort = event.ports[0];
   const selectedKeys = new Set<string>();
+  const filesByKey = new Map<string, FileEntry>();
 
   messagePort.onmessage = (event) => {
     if (typeof event.data === "object" && "isFocused" in event.data) {
@@ -218,7 +219,7 @@ window.addEventListener("message", (event) => {
       });
 
       fileRow.addEventListener("dblclick", () => {
-        messagePort.postMessage([file.key]);
+        messagePort.postMessage([{ key: file.key, size: file.size }]);
       });
     }
   }
@@ -231,6 +232,8 @@ window.addEventListener("message", (event) => {
         return;
       }
       const files: FileEntry[] = await response.json();
+      filesByKey.clear();
+      files.forEach((file) => filesByKey.set(file.key, file));
       STATUS_TEXT.hidden = true;
 
       if (files.length === 0) {
@@ -253,7 +256,13 @@ window.addEventListener("message", (event) => {
       alert("Please select a log file.");
       return;
     }
-    messagePort.postMessage(Array.from(selectedKeys));
+    const selected = Array.from(selectedKeys)
+      .map((key) => {
+        const match = filesByKey.get(key);
+        return match === undefined ? null : { key: match.key, size: match.size };
+      })
+      .filter((entry): entry is { key: string; size: number } => entry !== null);
+    messagePort.postMessage(selected);
   }
 
   EXIT_BUTTON.addEventListener("click", () => messagePort.postMessage(null));

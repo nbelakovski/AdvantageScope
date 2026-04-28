@@ -35,6 +35,7 @@ let filenames: string[] = [];
 let selectedFiles: string[] = [];
 let lastClickedIndex: number | null = null;
 let lastClickedSelect = true;
+let fileSizesByName: { [name: string]: number } = {};
 
 function sendMainMessage(name: string, data?: any) {
   if (messagePort !== null) {
@@ -212,6 +213,10 @@ function handleMainMessage(message: NamedMessage) {
 
       // Add new list items
       filenames = fileData.map((file) => file.name);
+      fileSizesByName = {};
+      fileData.forEach((file) => {
+        fileSizesByName[file.name] = file.size;
+      });
       fileData.forEach((file, index) => {
         let item = document.createElement("div");
         FILE_LIST_ITEMS.appendChild(item);
@@ -251,7 +256,11 @@ function handleMainMessage(message: NamedMessage) {
 
         item.addEventListener("dblclick", () => {
           if (!file.isFolder) {
-            sendMainMessage("save", [file.name]);
+            if (DISTRIBUTION === Distribution.Lite) {
+              sendMainMessage("save", [{ name: file.name, size: file.size }]);
+            } else {
+              sendMainMessage("save", [file.name]);
+            }
           }
         });
 
@@ -327,7 +336,14 @@ function save() {
   if (selectedFiles.length === 0) {
     alert("Please select a log to download.");
   } else {
-    sendMainMessage("save", selectedFiles);
+    if (DISTRIBUTION === Distribution.Lite) {
+      sendMainMessage(
+        "save",
+        selectedFiles.map((name) => ({ name, size: fileSizesByName[name] ?? -1 }))
+      );
+    } else {
+      sendMainMessage("save", selectedFiles);
+    }
   }
 }
 
