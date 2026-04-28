@@ -290,13 +290,6 @@ function openCloudBrowser() {
   });
 }
 
-async function openUploadLog() {
-  let port = await openPopupWindow("www/uploadLog.html", [360, 120], "pixels", () => {
-    closePopupWindow();
-  });
-  port.postMessage(null);
-}
-
 /** Opens a popup window for bulk cloud upload. */
 async function openBulkCloudUpload() {
   let port = await openPopupWindow("www/bulkCloudUpload.html", [500, 500], "pixels", () => {
@@ -690,12 +683,6 @@ async function handleHubMessage(message: NamedMessage) {
                 content: `Upload Asset`,
                 callback() {
                   openUploadAsset();
-                }
-              },
-              {
-                content: `Upload Log`,
-                callback() {
-                  openUploadLog();
                 }
               },
               {
