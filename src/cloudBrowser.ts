@@ -5,6 +5,8 @@
 // license that can be found in the LICENSE file
 // at the root directory of this project.
 
+import { BOOTSTRAP_CLOUD_DOWNLOAD_ICON } from "./shared/CloudIcons";
+
 interface FileEntry {
   key: string; // relative to Tribecbot/, e.g. "Champs/file.wpilog"
   size: number;
@@ -39,95 +41,6 @@ function buildTree(files: FileEntry[]): TreeNode {
 }
 
 window.addEventListener("message", (event) => {
-  // Keep only tree-specific styles. Base popup styling is reused from download.css.
-  const style = document.createElement("style");
-  style.textContent = `
-    #tree {
-      padding-top: 3px;
-      padding-bottom: 3px;
-    }
-
-    #status {
-      padding: 12px;
-      font-size: 13px;
-      font-style: italic;
-      color: #666;
-      text-align: center;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      #status {
-        color: #999;
-      }
-    }
-
-    .tree-folder {
-      display: flex;
-      align-items: center;
-      height: 25px;
-      margin-left: 6px;
-      margin-right: 6px;
-      padding-right: 5px;
-      border-radius: 8px;
-      line-height: 25px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      cursor: pointer;
-      user-select: none;
-      font-size: 14px;
-      font-weight: 600;
-      gap: 5px;
-    }
-
-    .tree-folder:hover {
-      background-color: #e8e8e8;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .tree-folder:hover {
-        background-color: #151515;
-      }
-    }
-
-    .tree-toggle {
-      font-size: 10px;
-      width: 12px;
-      text-align: center;
-      flex-shrink: 0;
-      color: #555;
-    }
-    @media (prefers-color-scheme: dark) {
-      .tree-toggle {
-        color: #aaa;
-      }
-    }
-
-    .tree-folder-name,
-    .tree-name {
-      color: #111;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .tree-folder-name,
-      .tree-name {
-        color: #fff;
-      }
-    }
-
-    .file-item.tree-file {
-      display: flex;
-      align-items: center;
-      cursor: pointer;
-      user-select: none;
-    }
-
-    .file-item.tree-file img {
-      width: 15px;
-    }
-  `;
-  document.head.appendChild(style);
-  
   const EXIT_BUTTON = document.getElementById("exit") as HTMLButtonElement;
   const DOWNLOAD_BUTTON = document.getElementById("download") as HTMLButtonElement;
   const TREE_CONTAINER = document.getElementById("tree") as HTMLElement;
@@ -209,6 +122,12 @@ window.addEventListener("message", (event) => {
       sizeSpan.textContent = "(" + (file.size < 1e5 ? "<0.1" : Math.round(file.size / 1e5) / 10) + " MB)";
       fileRow.appendChild(sizeSpan);
 
+      const downloadButton = document.createElement("div");
+      downloadButton.className = "tree-download-button";
+      downloadButton.title = "Download log";
+      downloadButton.innerHTML = BOOTSTRAP_CLOUD_DOWNLOAD_ICON;
+      fileRow.appendChild(downloadButton);
+
       fileRow.addEventListener("click", () => {
         selectedKeys.clear();
         document.querySelectorAll(".tree-file").forEach((row) => {
@@ -220,6 +139,40 @@ window.addEventListener("message", (event) => {
 
       fileRow.addEventListener("dblclick", () => {
         messagePort.postMessage([{ key: file.key, size: file.size }]);
+      });
+
+      downloadButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        try {
+          downloadButton.style.opacity = "0.5";
+          downloadButton.style.pointerEvents = "none";
+          const encodedPath = file.key.split("/").map(encodeURIComponent).join("/");
+          const url = `../cloud-log/${encodedPath}`;
+          console.log("Downloading from:", url);
+          const response = await fetch(url);
+          console.log("Response status:", response.status, response.statusText);
+          if (!response.ok) {
+            alert("Failed to download file: " + response.statusText);
+            return;
+          }
+          const blob = await response.blob();
+          console.log("Blob size:", blob.size);
+          const downloadUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = downloadUrl;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(downloadUrl);
+          console.log("Download initiated for:", file.name);
+        } catch (error) {
+          console.error("Download error:", error);
+          alert("Error downloading file: " + (error instanceof Error ? error.message : String(error)));
+        } finally {
+          downloadButton.style.opacity = "1";
+          downloadButton.style.pointerEvents = "auto";
+        }
       });
     }
   }

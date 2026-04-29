@@ -1,0 +1,127 @@
+/*
+  Copyright (c) 2021-2026 Littleton Robotics
+  http://github.com/Mechanical-Advantage
+
+  Use of this source code is governed by a BSD
+  license that can be found in the LICENSE file
+  at the root directory of this project.
+*/
+
+div.file-list {
+  overflow-y: auto;
+}
+
+#tree {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+#status {
+  padding: 12px;
+  font-size: 13px;
+  font-style: italic;
+  color: #666;
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  #status {
+    color: #999;
+  }
+}
+
+.tree-folder {
+  display: flex;
+  align-items: center;
+  height: 25px;
+  margin-left: 6px;
+  margin-right: 6px;
+  padding-right: 5px;
+  border-radius: 8px;
+  line-height: 25px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  user-select: none;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 5px;
+}
+
+.tree-folder:hover {
+  background-color: #e8e8e8;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tree-folder:hover {
+    background-color: #151515;
+  }
+}
+
+.tree-toggle {
+  font-size: 10px;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+  color: #555;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tree-toggle {
+    color: #aaa;
+  }
+}
+
+.tree-folder-name,
+.tree-name {
+  color: #111;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tree-folder-name,
+  .tree-name {
+    color: #fff;
+  }
+}
+
+.file-item.tree-file {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-item.tree-file img {
+  width: 15px;
+}
+
+.tree-download-button {
+  margin-left: auto;
+  margin-right: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tree-download-button svg {
+  width: 16px;
+  height: 16px;
+  color: #555;
+}
+
+.tree-download-button:hover svg {
+  color: #000;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tree-download-button svg {
+    color: #aaa;
+  }
+
+  .tree-download-button:hover svg {
+    color: #fff;
+  }
+}
