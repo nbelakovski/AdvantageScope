@@ -97,6 +97,20 @@ function uploadWithProgress(url: string, body: Blob | ArrayBuffer, onProgress: (
   });
 }
 
+async function getCloudLogDownloadUrl(relativeKey: string): Promise<string> {
+  const encodedPath = relativeKey.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(`cloud-log-url/${encodedPath}`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText || "Failed to get cloud log URL");
+  }
+  const data = (await response.json()) as { url: string };
+  if (typeof data.url !== "string" || data.url.length === 0) {
+    throw new Error("Invalid cloud log URL response");
+  }
+  return data.url;
+}
+
 function handleOpenLogSelection() {
   const selectedFiles = Array.from(OPEN_LOG_INPUT.files ?? []);
   OPEN_LOG_INPUT.value = "";
@@ -405,7 +419,7 @@ async function handleHubMessage(message: NamedMessage) {
         let fetchUrl: string;
         if (path.startsWith("cloud:")) {
           const relKey = path.slice("cloud:".length);
-          fetchUrl = `cloud-log/${relKey.split("/").map(encodeURIComponent).join("/")}`;
+          fetchUrl = await getCloudLogDownloadUrl(relKey);
         } else {
           let prefs = DEFAULT_PREFS;
           let prefsRaw = localStorage.getItem(LocalStorageKeys.PREFS);
@@ -540,7 +554,7 @@ async function handleHubMessage(message: NamedMessage) {
         try {
           if (path.startsWith("cloud:")) {
             const relKey = path.slice("cloud:".length);
-            const fetchUrl = `cloud-log/${relKey.split("/").map(encodeURIComponent).join("/")}`;
+            const fetchUrl = await getCloudLogDownloadUrl(relKey);
             const response = await fetch(fetchUrl);
             if (response.ok) {
               const buffer = await response.arrayBuffer();

@@ -267,7 +267,67 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(f"Failed to check cloud log existence: {e}".encode("utf-8"))
 
-        # Proxy a log file from DigitalOcean Spaces
+        # Generate a presigned URL for direct log download from DigitalOcean Spaces
+        elif request.path.startswith(WEBROOT + "/cloud-log-url/"):
+            do_key = os.environ.get("DO_SPACES_KEY")
+            do_secret = os.environ.get("DO_SPACES_SECRET")
+            do_region = os.environ.get("DO_SPACES_REGION")
+            do_bucket = os.environ.get("DO_SPACES_BUCKET")
+
+            if not all([do_key, do_secret, do_region, do_bucket]):
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Cloud logs not configured.")
+                return
+
+            raw_rel = urllib.parse.unquote(request.path[len(WEBROOT + "/cloud-log-url/"):])
+            # Sanitize: disallow empty paths, path traversal components, and non-log extensions
+            if not raw_rel or ".." in raw_rel.split("/") or not any(raw_rel.endswith(suffix) for suffix in ALLOWED_LOG_SUFFIXES):
+                self.send_error(400, "Invalid log path")
+                return
+
+            key = f"Tribecbot/{raw_rel}"
+            filename = os.path.basename(raw_rel)
+            response_disposition = query.get("response-content-disposition", [""])[0]
+            if response_disposition == "":
+                response_disposition = f'attachment; filename="{filename}"'
+            try:
+                import boto3
+                from botocore.config import Config as BotocoreConfig
+
+                s3 = boto3.client(
+                    "s3",
+                    region_name=do_region,
+                    endpoint_url=f"https://{do_region}.digitaloceanspaces.com",
+                    aws_access_key_id=do_key,
+                    aws_secret_access_key=do_secret,
+                    config=BotocoreConfig(signature_version="s3v4")
+                )
+                presigned_url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": do_bucket,
+                        "Key": key,
+                        "ResponseContentType": "application/octet-stream",
+                        "ResponseContentDisposition": response_disposition
+                    },
+                    ExpiresIn=900
+                )
+                json_string = json.dumps({"url": presigned_url}, separators=(',', ':'))
+                self._send_response_with_compression(200, "application/json", json_string.encode("utf-8"))
+            except ImportError:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"boto3 is required for cloud logs. Run: pip install boto3")
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(f"Failed to generate cloud log URL: {e}".encode("utf-8"))
+
+        # Backward-compatible endpoint: redirect to a presigned URL instead of proxying bytes
         elif request.path.startswith(WEBROOT + "/cloud-log/"):
             do_key = os.environ.get("DO_SPACES_KEY")
             do_secret = os.environ.get("DO_SPACES_SECRET")
@@ -282,12 +342,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
 
             raw_rel = urllib.parse.unquote(request.path[len(WEBROOT + "/cloud-log/"):])
-            # Sanitize: disallow empty paths, path traversal components, and non-log extensions
             if not raw_rel or ".." in raw_rel.split("/") or not any(raw_rel.endswith(suffix) for suffix in ALLOWED_LOG_SUFFIXES):
                 self.send_error(400, "Invalid log path")
                 return
 
             key = f"Tribecbot/{raw_rel}"
+            filename = os.path.basename(raw_rel)
             try:
                 import boto3
                 from botocore.config import Config as BotocoreConfig
@@ -300,9 +360,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     aws_secret_access_key=do_secret,
                     config=BotocoreConfig(signature_version="s3v4")
                 )
-                obj = s3.get_object(Bucket=do_bucket, Key=key)
-                file_content = obj["Body"].read()
-                self._send_response_with_compression(200, "application/octet-stream", file_content)
+                presigned_url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": do_bucket,
+                        "Key": key,
+                        "ResponseContentType": "application/octet-stream",
+                        "ResponseContentDisposition": f'attachment; filename="{filename}"'
+                    },
+                    ExpiresIn=900
+                )
+                self.send_response(307)
+                self.send_header("Location", presigned_url)
+                self.end_headers()
             except ImportError:
                 self.send_response(503)
                 self.send_header("Content-Type", "text/plain")
@@ -312,7 +382,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(500)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(f"Failed to fetch cloud log: {e}".encode("utf-8"))
+                self.wfile.write(f"Failed to generate cloud log redirect: {e}".encode("utf-8"))
 
         # Serve everything else
         else:

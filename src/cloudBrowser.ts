@@ -147,27 +147,24 @@ window.addEventListener("message", (event) => {
           downloadButton.style.opacity = "0.5";
           downloadButton.style.pointerEvents = "none";
           const encodedPath = file.key.split("/").map(encodeURIComponent).join("/");
-          const url = `../cloud-log/${encodedPath}`;
-          console.log("Downloading from:", url);
-          const response = await fetch(url);
-          console.log("Response status:", response.status, response.statusText);
+          const response = await fetch(`../cloud-log-url/${encodedPath}`);
           if (!response.ok) {
-            alert("Failed to download file: " + response.statusText);
+            const text = await response.text();
+            alert("Failed to get download URL: " + (text || response.statusText));
             return;
           }
-          const blob = await response.blob();
-          console.log("Blob size:", blob.size);
-          const downloadUrl = URL.createObjectURL(blob);
+          const data = (await response.json()) as { url?: string };
+          if (typeof data.url !== "string" || data.url.length === 0) {
+            alert("Failed to get download URL.");
+            return;
+          }
           const a = document.createElement("a");
-          a.href = downloadUrl;
-          a.download = file.name;
+          a.href = data.url;
+          a.rel = "noopener";
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
-          URL.revokeObjectURL(downloadUrl);
-          console.log("Download initiated for:", file.name);
         } catch (error) {
-          console.error("Download error:", error);
           alert("Error downloading file: " + (error instanceof Error ? error.message : String(error)));
         } finally {
           downloadButton.style.opacity = "1";
